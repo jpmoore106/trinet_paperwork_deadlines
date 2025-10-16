@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Page background */
+html, body, #root {
+  height: 100%;
+}
+body {
+  background: #FD5000; /* TriNet orange */
+}
+/* Make native date controls render in dark mode */
+.dark-date {
+  color-scheme: dark; /* Firefox, Safari, Chromium all respect this */
+}
+
+/* Force white calendar icon on WebKit (Chrome/Edge/Safari) */
+.dark-date::-webkit-calendar-picker-indicator {
+  filter: invert(1);      /* flips black to white */
+  opacity: 1;             /* ensure it’s visible */
+}
+
+/* Optional: also force white for the clear/spin buttons if shown */
+.dark-date::-webkit-clear-button,
+.dark-date::-webkit-inner-spin-button {
+  filter: invert(1);
+}
+/* Base dark styling for the date inputs */
+.dark-date {
+  color-scheme: dark;                /* Hint browsers to use light glyphs */
+  position: relative;                /* Needed for the ::after overlay */
+}
+
+/* Try the simple approach first (WebKit browsers) */
+input[type="date"].dark-date::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(2) !important;  /* flip to white */
+  opacity: 1 !important;
+}
+
+/* If the above is ignored, we'll draw our own white icon on top */
+input[type="date"].dark-date::after {
+  content: "";
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  background-color: #fff; /* <- white */
+  /* calendar glyph via mask so it adopts background-color */
+  -webkit-mask: url("data:image/svg+xml;utf8,\
+  <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'>\
+    <path d='M7 2a1 1 0 0 0-1 1v1H5a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3h-1V3a1 1 0 1 0-2 0v1H8V3a1 1 0 0 0-1-1zM5 8h14v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8zm3 3h2v2H8v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2zM8 15h2v2H8v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z'/>\
+  </svg>") no-repeat center / contain;
+          mask: url("data:image/svg+xml;utf8,\
+  <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'>\
+    <path d='M7 2a1 1 0 0 0-1 1v1H5a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3h-1V3a1 1 0 1 0-2 0v1H8V3a1 1 0 0 0-1-1zM5 8h14v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8zm3 3h2v2H8v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2zM8 15h2v2H8v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z'/>\
+  </svg>") no-repeat center / contain;
+  pointer-events: none; /* lets clicks go through to the input */
+}
+
+/* Keep WebKit’s native button clickable, but invisible under our overlay */
+input[type="date"].dark-date::-webkit-calendar-picker-indicator {
+  position: relative;
+  z-index: 1;
+}

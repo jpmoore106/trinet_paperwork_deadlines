@@ -503,7 +503,7 @@ export default function App() {
         rel="noreferrer"
         className="underline hover:opacity-80 text-[var(--brand-secondary)]"
       >
-        2025 Core Paperwork Deadlines
+        2026 Core Paperwork Deadlines
       </a>
     </li>
     <li>

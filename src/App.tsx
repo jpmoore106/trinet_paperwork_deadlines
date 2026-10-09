@@ -16,7 +16,7 @@ import {
 import { Card, CardContent } from "./components/ui/card";
 import { motion } from "framer-motion";
 
-type ServiceModel = "Core" | "Preferred" | "OMS Small Group";
+type ServiceModel = "Core" | "Preferred" | "OMS Small Group" | "OMS Large Group";
 type EarlyAccessOption = "None" | "1 week" | "2 weeks" | "3 weeks" | "30 days";
 
 function clampToMidnight(d: Date) {
@@ -134,7 +134,24 @@ const OMS_SMALL_GROUP_ENROLLMENT: Record<string, { lastEA: string; lastEnrollmen
   "2028-01-01": { lastEA: "2027-12-15", lastEnrollment: "2027-12-22" },
 };
 
-type OmsDates = { earliestEA: Date; paperwork: Date; lastEA: Date; lastPaperwork: Date; lastEnrollment: Date };
+// 2027 OMS Large Group: last day of employee enrollment, keyed by benefit start date.
+const OMS_LARGE_GROUP_ENROLLMENT: Record<string, string> = {
+  "2027-01-01": "2026-12-17",
+  "2027-02-01": "2027-01-15",
+  "2027-03-01": "2027-02-12",
+  "2027-04-01": "2027-03-18",
+  "2027-05-01": "2027-04-19",
+  "2027-06-01": "2027-05-17",
+  "2027-07-01": "2027-06-16",
+  "2027-08-01": "2027-07-19",
+  "2027-09-01": "2027-08-18",
+  "2027-10-01": "2027-09-17",
+  "2027-11-01": "2027-10-18",
+  "2027-12-01": "2027-11-15",
+  "2028-01-01": "2027-12-17",
+};
+
+type OmsDates = { earliestEA: Date; paperwork: Date; lastEA?: Date; lastPaperwork?: Date; lastEnrollment: Date };
 
 // OMS requires Early Access. Earliest EA is 30 days before benefit start; the last EA date comes from
 // the enrollment calendar and must also be at least 1 week before the live date. Paperwork is due
@@ -155,6 +172,21 @@ function omsSmallGroupDates(benefitStart: Date, liveDate: Date): OmsDates | null
   };
 }
 
+// OMS Large Group: Early Access is 30 days before benefit start (and must be at least 1 week before
+// the live date); paperwork is due 11 business days before it.
+function omsLargeGroupDates(benefitStart: Date): OmsDates | null {
+  const lastEnrollment = OMS_LARGE_GROUP_ENROLLMENT[format(benefitStart, "yyyy-MM-dd")];
+  if (!lastEnrollment) return null;
+  const earliestEA = adjustEarlyAccessDate(addDays(benefitStart, -30), "30 days");
+  return { earliestEA, paperwork: subtractBusinessDays(earliestEA, 11), lastEnrollment: new Date(lastEnrollment + "T00:00:00") };
+}
+
+function omsDatesFor(model: ServiceModel, benefitStart: Date, liveDate: Date): OmsDates | null {
+  if (model === "OMS Small Group") return omsSmallGroupDates(benefitStart, liveDate);
+  if (model === "OMS Large Group") return omsLargeGroupDates(benefitStart);
+  return null;
+}
+
 type Period = {
   begin: Date;
   end: Date;
@@ -173,7 +205,7 @@ export default function App() {
   const [serviceModel, setServiceModel] = useState<ServiceModel>("Core");
   const [earlyAccess, setEarlyAccess] = useState<EarlyAccessOption>("None");
   const [tlmEnterprise, setTlmEnterprise] = useState(false);
-  const isOms = serviceModel === "OMS Small Group";
+  const isOms = serviceModel === "OMS Small Group" || serviceModel === "OMS Large Group";
 
   const toDate = (s: string) => new Date(s + (s.length === 10 ? "T00:00:00" : ""));
 
@@ -191,10 +223,10 @@ export default function App() {
         { min: 250, max: 499, bd: 31 },
       ];
       const bandsPref = [
-        { min: 0, max: 29, bd: 22 },
-        { min: 30, max: 73, bd: 27 },
-        { min: 74, max: 248, bd: 32 },
-        { min: 249, max: 499, bd: 37 },
+        { min: 0, max: 29, bd: 21 },
+        { min: 30, max: 74, bd: 26 },
+        { min: 75, max: 249, bd: 31 },
+        { min: 250, max: 499, bd: 36 },
       ];
       if (emp >= 500) return null;
       const bands = model === "Core" ? bandsCore : bandsPref;
@@ -220,7 +252,7 @@ export default function App() {
       if (isAfter(firstDeadline, minAllowed)) firstDeadline = minAllowed;
     }
     if (eaDeadline && (!firstDeadline || isBefore(eaDeadline, firstDeadline))) firstDeadline = eaDeadline;
-    if (isOms) firstDeadline = omsSmallGroupDates(startBenefits, startBegin)?.paperwork;
+    if (isOms) firstDeadline = omsDatesFor(serviceModel, startBenefits, startBegin)?.paperwork;
     // TLM Enterprise "Day 1": paperwork due 35 business days before the live date.
     if (tlmEnterprise && firstDeadline) {
       const tlmDeadline = subtractBusinessDays(startBegin, 35);
@@ -269,13 +301,13 @@ export default function App() {
   const omsDates = useMemo(() => {
     if (!isOms) return null;
     const live = clampToMidnight(toDate(payBegin));
-    const dates = omsSmallGroupDates(clampToMidnight(toDate(benefitsStart)), live);
-    if (dates && tlmEnterprise) {
+    const dates = omsDatesFor(serviceModel, clampToMidnight(toDate(benefitsStart)), live);
+    if (dates?.lastPaperwork && tlmEnterprise) {
       const tlmDeadline = subtractBusinessDays(live, 35);
       if (isBefore(tlmDeadline, dates.lastPaperwork)) dates.lastPaperwork = tlmDeadline;
     }
     return dates;
-  }, [isOms, benefitsStart, payBegin, tlmEnterprise]);
+  }, [isOms, serviceModel, benefitsStart, payBegin, tlmEnterprise]);
 
   type DayLabels = { [iso: string]: string[] };
   const labelMap: DayLabels = useMemo(() => {
@@ -291,12 +323,14 @@ export default function App() {
     const eaRaw = eaActive ? addDays(startBegin, earlyAccessOffset(earlyAccess)) : undefined;
     const eaDate = eaRaw ? adjustEarlyAccessDate(eaRaw, earlyAccess) : undefined;
 
-    if (omsDates) {
+    if (omsDates?.lastEA && omsDates.lastPaperwork) {
       add(omsDates.earliestEA, "Earliest Early Access Date");
       add(omsDates.lastEA, "Last Early Access Date");
       add(omsDates.lastPaperwork, "Last Paperwork Deadline");
-      add(omsDates.lastEnrollment, "Last Day Employee Enrollment");
+    } else if (omsDates) {
+      add(omsDates.earliestEA, "Early Access Start Date");
     }
+    if (omsDates) add(omsDates.lastEnrollment, "Last Day Employee Enrollment");
 
     periods.forEach((p, idx) => {
       add(p.begin, "Pay Period Start");
@@ -380,14 +414,17 @@ export default function App() {
       errs.push("Custom Timeline Required! - please submit sales support case");
     }
     if (isOms && !omsDates) {
-      errs.push("OMS Small Group: benefits start date must be the 1st of a month from January 2027 through January 2028 (2027 OMS deadlines).");
+      errs.push(`${serviceModel}: benefits start date must be the 1st of a month from January 2027 through January 2028 (2027 OMS deadlines).`);
     }
-    if (omsDates && isBefore(omsDates.lastEA, omsDates.earliestEA)) {
+    if (omsDates?.lastEA && isBefore(omsDates.lastEA, omsDates.earliestEA)) {
       errs.push("OMS Small Group: no valid Early Access window. Early Access must be at least 1 week before the live date.");
+    }
+    if (serviceModel === "OMS Large Group" && omsDates && isAfter(omsDates.earliestEA, addDays(b, -7))) {
+      errs.push("OMS Large Group: Early Access (30 days before benefit start) must be at least 1 week before the live date.");
     }
   
     return errs;
-  }, [payBegin, payEnd, firstCheck, benefitsStart, earlyAccess, employeeCount, isOms, omsDates]);
+  }, [payBegin, payEnd, firstCheck, benefitsStart, earlyAccess, employeeCount, isOms, omsDates, serviceModel]);
   
   // ✅ Non-blocking warnings (separate hook!)
   const warningMessages = useMemo(() => {
@@ -493,13 +530,16 @@ export default function App() {
                       <option>Core</option>
                       <option>Preferred</option>
                       <option>OMS Small Group</option>
+                      <option>OMS Large Group</option>
                     </select>
                   </div>
                 </div>
 
                 {isOms ? (
                   <p className="text-sm text-slate-600">
-                    Early Access is required for OMS. The calendar shows the paperwork deadline for the earliest Early Access date and the last paperwork deadline for the last Early Access date.
+                    {serviceModel === "OMS Small Group"
+                      ? "Early Access is required for OMS. The calendar shows the paperwork deadline for the earliest Early Access date and the last paperwork deadline for the last Early Access date."
+                      : "Early Access is required for OMS Large Group: 30 days before the benefit start date, with paperwork due 11 business days before it."}
                   </p>
                 ) : (
                 <div>
@@ -646,9 +686,9 @@ export default function App() {
           <h3 className="text-base font-semibold mb-3 text-white">Legend</h3>
           <div className="flex flex-wrap gap-2">
             {["Pay Period Start", "Pay Period End", "Check Date", "Paperwork Deadline", "Benefits Start Date",
-              ...(isOms
+              ...(serviceModel === "OMS Small Group"
                 ? ["Earliest Early Access Date", "Last Early Access Date", "Last Paperwork Deadline", "Last Day Employee Enrollment"]
-                : ["Early Access Start Date"])].map((k) => (
+                : ["Early Access Start Date", ...(isOms ? ["Last Day Employee Enrollment"] : [])])].map((k) => (
               <span key={k} className={`px-2 py-1 rounded-lg text-xs ${labelClass(k)}`}>{k}</span>
             ))}
           </div>
@@ -749,7 +789,10 @@ if (typeof window !== "undefined") {
     console.assert(isFederalHolidayObserved(new Date(2026, 10, 27)) === true);
     // OMS Small Group, benefit start 1/1/2027 (live 1/1/2027)
     const oms = omsSmallGroupDates(new Date(2027, 0, 1), new Date(2027, 0, 1));
-    console.assert(!!oms && format(oms.paperwork, "yyyy-MM-dd") === "2026-11-13" && format(oms.lastPaperwork, "yyyy-MM-dd") === "2026-11-30");
+    console.assert(!!oms && format(oms.paperwork, "yyyy-MM-dd") === "2026-11-13" && format(oms.lastPaperwork!, "yyyy-MM-dd") === "2026-11-30");
+    // OMS Large Group, benefit start 4/1/2027
+    const omsLg = omsLargeGroupDates(new Date(2027, 3, 1));
+    console.assert(!!omsLg && format(omsLg.earliestEA, "yyyy-MM-dd") === "2027-03-02" && format(omsLg.paperwork, "yyyy-MM-dd") === "2027-02-12");
     console.assert(format(adjustEarlyAccessDate(new Date(2026, 0, 10), "1 week"), "yyyy-MM-dd") === "2026-01-09");
     console.assert(format(adjustEarlyAccessDate(new Date(2026, 0, 10), "30 days"), "yyyy-MM-dd") === "2026-01-12");
     // Early Access on Thanksgiving (Thu 2026-11-26) rolls to Wed, or past the day after to Mon for "30 days"

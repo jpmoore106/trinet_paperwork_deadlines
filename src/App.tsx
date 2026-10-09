@@ -61,16 +61,19 @@ function usFederalHolidaysObserved(year: number): Set<string> {
 }
 function isFederalHolidayObserved(d: Date) {
   const year = d.getFullYear();
-  const set = usFederalHolidaysObserved(year);
-  return set.has(format(d, "yyyy-MM-dd"));
+  const key = format(d, "yyyy-MM-dd");
+  // Next year's set covers New Year's Day observed on Dec 31 when Jan 1 falls on a Saturday.
+  return usFederalHolidaysObserved(year).has(key) || usFederalHolidaysObserved(year + 1).has(key);
+}
+function isBusinessDay(d: Date) {
+  return !isWeekend(d) && !isFederalHolidayObserved(d);
 }
 function subtractBusinessDays(date: Date, businessDays: number) {
   let d = clampToMidnight(date);
   let remaining = businessDays;
   while (remaining > 0) {
     d = addDays(d, -1);
-    const day = d.getDay();
-    if (day !== 0 && day !== 6) remaining -= 1;
+    if (isBusinessDay(d)) remaining -= 1;
   }
   return d;
 }
@@ -637,5 +640,11 @@ if (typeof window !== "undefined") {
     const monday = new Date(2025, 0, 20);
     const fiveBD = subtractBusinessDays(monday, 5);
     console.assert(format(fiveBD, "yyyy-MM-dd") === "2025-01-13");
+    // Thanksgiving (Thu 2025-11-27) is skipped
+    console.assert(format(subtractBusinessDays(new Date(2025, 10, 28), 1), "yyyy-MM-dd") === "2025-11-26");
+    // Christmas (Thu 2025-12-25) and New Year's Day (Thu 2026-01-01) are skipped
+    console.assert(format(subtractBusinessDays(new Date(2026, 0, 2), 5), "yyyy-MM-dd") === "2025-12-24");
+    // New Year's Day 2028 (Sat) is observed Fri 2027-12-31
+    console.assert(isFederalHolidayObserved(new Date(2027, 11, 31)) === true);
   } catch {}
 }

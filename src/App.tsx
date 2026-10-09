@@ -61,16 +61,19 @@ function usFederalHolidaysObserved(year: number): Set<string> {
 }
 function isFederalHolidayObserved(d: Date) {
   const year = d.getFullYear();
-  const set = usFederalHolidaysObserved(year);
-  return set.has(format(d, "yyyy-MM-dd"));
+  const key = format(d, "yyyy-MM-dd");
+  // Next year's set covers New Year's Day observed on Dec 31 when Jan 1 falls on a Saturday.
+  return usFederalHolidaysObserved(year).has(key) || usFederalHolidaysObserved(year + 1).has(key);
+}
+function isBusinessDay(d: Date) {
+  return !isWeekend(d) && !isFederalHolidayObserved(d);
 }
 function subtractBusinessDays(date: Date, businessDays: number) {
   let d = clampToMidnight(date);
   let remaining = businessDays;
   while (remaining > 0) {
     d = addDays(d, -1);
-    const day = d.getDay();
-    if (day !== 0 && day !== 6) remaining -= 1;
+    if (isBusinessDay(d)) remaining -= 1;
   }
   return d;
 }
@@ -99,6 +102,14 @@ function earlyAccessOffset(opt: EarlyAccessOption): number {
   if (opt === "3 weeks") return -21;
   if (opt === "30 days") return -28;
   return 0;
+}
+// Moves an Early Access date off weekends and federal holidays:
+// "30 days" rolls forward to the next business day, other options roll back to the previous one.
+function adjustEarlyAccessDate(raw: Date, opt: EarlyAccessOption): Date {
+  const step = opt === "30 days" ? 1 : -1;
+  let d = raw;
+  while (!isBusinessDay(d)) d = addDays(d, step);
+  return d;
 }
 
 type Period = {
@@ -150,18 +161,7 @@ export default function App() {
 
     const eaActive = earlyAccess !== "None" && employeeCount >= 10;
     const eaRaw = eaActive ? addDays(startBegin, earlyAccessOffset(earlyAccess)) : undefined;
-    const eaDate = (() => {
-      if (!eaRaw) return undefined;
-      const wd = eaRaw.getDay();
-      if (earlyAccess === "30 days") {
-        if (wd === 6) return addDays(eaRaw, 2); // Sat -> Mon
-        if (wd === 0) return addDays(eaRaw, 1); // Sun -> Mon
-        return eaRaw;
-      }
-      if (wd === 6) return addDays(eaRaw, -1); // Sat -> Fri
-      if (wd === 0) return addDays(eaRaw, -2); // Sun -> Fri
-      return eaRaw;
-    })();
+    const eaDate = eaRaw ? adjustEarlyAccessDate(eaRaw, earlyAccess) : undefined;
 
     let eaDeadline: Date | undefined;
     if (eaActive && eaDate) {
@@ -226,18 +226,7 @@ export default function App() {
     const startBegin = clampToMidnight(new Date(payBegin + "T00:00:00"));
     const eaActive = earlyAccess !== "None" && employeeCount >= 10;
     const eaRaw = eaActive ? addDays(startBegin, earlyAccessOffset(earlyAccess)) : undefined;
-    const eaDate = (() => {
-      if (!eaRaw) return undefined;
-      const wd = eaRaw.getDay();
-      if (earlyAccess === "30 days") {
-        if (wd === 6) return addDays(eaRaw, 2);
-        if (wd === 0) return addDays(eaRaw, 1);
-        return eaRaw;
-      }
-      if (wd === 6) return addDays(eaRaw, -1);
-      if (wd === 0) return addDays(eaRaw, -2);
-      return eaRaw;
-    })();
+    const eaDate = eaRaw ? adjustEarlyAccessDate(eaRaw, earlyAccess) : undefined;
 
     periods.forEach((p, idx) => {
       add(p.begin, "Pay Period Start");
@@ -637,5 +626,19 @@ if (typeof window !== "undefined") {
     const monday = new Date(2025, 0, 20);
     const fiveBD = subtractBusinessDays(monday, 5);
     console.assert(format(fiveBD, "yyyy-MM-dd") === "2025-01-13");
+    // Thanksgiving (Thu 2025-11-27) is skipped
+    console.assert(format(subtractBusinessDays(new Date(2025, 10, 28), 1), "yyyy-MM-dd") === "2025-11-26");
+    // Christmas (Thu 2025-12-25) and New Year's Day (Thu 2026-01-01) are skipped
+    console.assert(format(subtractBusinessDays(new Date(2026, 0, 2), 5), "yyyy-MM-dd") === "2025-12-24");
+    // New Year's Day 2028 (Sat) is observed Fri 2027-12-31
+    console.assert(isFederalHolidayObserved(new Date(2027, 11, 31)) === true);
+    // Early Access: weekends roll as before (Sat -> Fri, or Sat -> Mon for "30 days")
+    console.assert(format(adjustEarlyAccessDate(new Date(2026, 0, 10), "1 week"), "yyyy-MM-dd") === "2026-01-09");
+    console.assert(format(adjustEarlyAccessDate(new Date(2026, 0, 10), "30 days"), "yyyy-MM-dd") === "2026-01-12");
+    // Early Access on Thanksgiving (Thu 2026-11-26) rolls to Wed, or to Fri for "30 days"
+    console.assert(format(adjustEarlyAccessDate(new Date(2026, 10, 26), "2 weeks"), "yyyy-MM-dd") === "2026-11-25");
+    console.assert(format(adjustEarlyAccessDate(new Date(2026, 10, 26), "30 days"), "yyyy-MM-dd") === "2026-11-27");
+    // Sun 2026-01-18 with "30 days" skips MLK Day (Mon) and lands on Tue
+    console.assert(format(adjustEarlyAccessDate(new Date(2026, 0, 18), "30 days"), "yyyy-MM-dd") === "2026-01-20");
   } catch {}
 }

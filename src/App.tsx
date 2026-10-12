@@ -333,7 +333,7 @@ export default function App() {
 
     pushPeriod(startBegin, startEnd, startCheck, true);
 
-    const countAdditional = 6;
+    const countAdditional = 2; // three pay periods in all
     let b = startBegin;
     let e = startEnd;
     let c = startCheck;
@@ -411,27 +411,16 @@ export default function App() {
     return map;
   }, [periods, eaDate, omsDates]);
 
-  const priorMonthsNeeded = useMemo(() => {
-    const baseStart = startOfMonth(new Date(payBegin + "T00:00:00"));
-    let need = 0;
-    for (let k = 1; k <= 2; k++) {
-      const mStart = addMonths(baseStart, -k);
-      const mEnd = endOfMonth(mStart);
-      const has = Object.keys(labelMap).some((iso) => {
-        const d = new Date(iso + "T00:00:00");
-        return d >= mStart && d <= mEnd;
-      });
-      if (has) need = k;
-    }
-    return need;
-  }, [labelMap, payBegin]);
-
+  // Show only the months that have a labeled date: from the earliest (usually the paperwork deadline)
+  // through the last of the three check dates.
   const monthStarts = useMemo(() => {
-    const baseStart = startOfMonth(new Date(payBegin + "T00:00:00"));
-    const start = addMonths(baseStart, -priorMonthsNeeded);
-    const count = 7 + priorMonthsNeeded;
-    return Array.from({ length: count }, (_, i) => addMonths(start, i));
-  }, [payBegin, priorMonthsNeeded]);
+    const dates = Object.keys(labelMap).sort();
+    const base = startOfMonth(new Date(payBegin + "T00:00:00"));
+    const first = dates.length ? startOfMonth(new Date(dates[0] + "T00:00:00")) : base;
+    const last = dates.length ? startOfMonth(new Date(dates[dates.length - 1] + "T00:00:00")) : base;
+    const count = Math.min(12, (last.getFullYear() - first.getFullYear()) * 12 + last.getMonth() - first.getMonth() + 1);
+    return Array.from({ length: Math.max(1, count) }, (_, i) => addMonths(first, i));
+  }, [labelMap, payBegin]);
 
   const brandVars = {
     "--brand-primary": "#0B0134",

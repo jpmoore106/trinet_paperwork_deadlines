@@ -15,6 +15,7 @@ import {
 } from "date-fns";
 import { Card, CardContent } from "./components/ui/card";
 import { motion } from "framer-motion";
+import { OnboardingTimeline, TimelineDocument, type OnboardingStep } from "./components/ClientTimeline";
 
 type ServiceModel = "Core" | "Preferred" | "OMS Small Group" | "OMS Large Group";
 type EarlyAccessOption = "None" | "1 week" | "2 weeks" | "3 weeks" | "30 days";
@@ -75,6 +76,15 @@ function subtractBusinessDays(date: Date, businessDays: number) {
   let remaining = businessDays;
   while (remaining > 0) {
     d = addDays(d, -1);
+    if (isBusinessDay(d)) remaining -= 1;
+  }
+  return d;
+}
+function addBusinessDays(date: Date, businessDays: number) {
+  let d = clampToMidnight(date);
+  let remaining = businessDays;
+  while (remaining > 0) {
+    d = addDays(d, 1);
     if (isBusinessDay(d)) remaining -= 1;
   }
   return d;
@@ -187,6 +197,60 @@ function omsDatesFor(model: ServiceModel, benefitStart: Date, liveDate: Date): O
   return null;
 }
 
+// The estimated onboarding plan for the client timeline, from the paperwork deadline to transition to Customer
+// Success. Fixed dates (deadline, Early Access, go-live, benefits, first check) come from the calendar; the steps in
+// between are estimates that the Transition Consultant confirms in the welcome call.
+function onboardingSteps(i: {
+  deadline: Date;
+  eaDate?: Date;
+  earlyAccess: EarlyAccessOption;
+  live: Date;
+  payEnd: Date;
+  benefitsStart: Date;
+  firstCheck: Date;
+  lastEnrollment?: Date;
+}): OnboardingStep[] {
+  const { deadline, eaDate: ea, live } = i;
+  const access = ea ?? live; // when employees first get into the platform
+  const steps: OnboardingStep[] = [];
+  const at = (d: Date, s: Omit<OnboardingStep, "date">) => steps.push({ date: format(d, "yyyy-MM-dd"), ...s });
+  const latest = (d: Date, limit: Date) => (isAfter(d, limit) ? limit : d);
+
+  at(deadline, { title: "Paperwork deadline", owner: "Company", milestone: true,
+    detail: "Sign the TriNet Service Agreement and Electronic Funds Transfer form (DocuSign) and submit the onboarding paperwork." });
+  const welcome = addBusinessDays(deadline, 2);
+  at(welcome, { title: "Welcome call", owner: "TriNet and company", estimated: true,
+    detail: "Meet your Transition Consultant, get your customized implementation timeline and schedule the setup meetings." });
+  const setup = latest(addBusinessDays(welcome, 3), subtractBusinessDays(access, 4));
+  at(setup, { title: "Company setup", owner: "Company", estimated: true,
+    detail: "Enter company information on the Customer Setup Site with your Transition Consultant (about 90 minutes)." });
+  const employees = latest(addBusinessDays(setup, 2), subtractBusinessDays(access, 2));
+  at(employees, { title: "Worksite employee setup", owner: "TriNet and company", estimated: true,
+    detail: "Load employee data into the platform in a 30-minute working session." });
+  if (ea) {
+    at(ea, { title: "Early Access begins", owner: "Employees", milestone: true,
+      detail: `Employees get into the TriNet platform ${i.earlyAccess === "None" ? "early" : `${i.earlyAccess} before go-live`} to review their information and enroll in benefits.` });
+  }
+  if (i.lastEnrollment) {
+    at(i.lastEnrollment, { title: "Benefits enrollment closes", owner: "Employees",
+      detail: "Last day for employees to enroll in TriNet benefits." });
+  }
+  const training = latest(addBusinessDays(access, 1), subtractBusinessDays(live, 1));
+  at(isBefore(training, employees) ? employees : training, { title: "Platform training", owner: "TriNet", estimated: true,
+    detail: "A guided tour of the TriNet platform for administrators and managers." });
+  at(live, { title: "Go-live", owner: "TriNet and company", milestone: true,
+    detail: `First TriNet pay period ${format(live, "MMM d")} – ${format(i.payEnd, "MMM d, yyyy")}.${ea ? "" : " Employees get platform access and enroll in benefits."}` });
+  at(i.benefitsStart, { title: "Benefits effective", owner: "Employees", milestone: true, detail: "TriNet-sponsored benefits begin." });
+  let prep = latest(subtractBusinessDays(i.firstCheck, 4), i.payEnd);
+  while (!isBusinessDay(prep)) prep = addDays(prep, -1); // the pay period can end on a weekend
+  at(prep, { title: "First payroll preparation", owner: "TriNet and company", estimated: true,
+    detail: "Review hours, earnings and deductions with your Transition Consultant before the first payroll deadline." });
+  at(i.firstCheck, { title: "First TriNet paycheck", owner: "TriNet", milestone: true, detail: "Employees receive their first TriNet paycheck." });
+  at(addBusinessDays(i.firstCheck, 20), { title: "Transition to Customer Success", owner: "TriNet", estimated: true,
+    detail: "Your Transition Consultant confirms implementation is complete and introduces your ongoing service team." });
+  return steps.sort((a, b) => a.date.localeCompare(b.date));
+}
+
 type Period = {
   begin: Date;
   end: Date;
@@ -205,6 +269,8 @@ export default function App() {
   const [serviceModel, setServiceModel] = useState<ServiceModel>("Core");
   const [earlyAccess, setEarlyAccess] = useState<EarlyAccessOption>("None");
   const [tlmEnterprise, setTlmEnterprise] = useState(false);
+  const [companyName, setCompanyName] = useState("");
+  const [preparedBy, setPreparedBy] = useState("");
   const isOms = serviceModel === "OMS Small Group" || serviceModel === "OMS Large Group";
 
   const toDate = (s: string) => new Date(s + (s.length === 10 ? "T00:00:00" : ""));
@@ -309,6 +375,12 @@ export default function App() {
     return dates;
   }, [isOms, serviceModel, benefitsStart, payBegin, tlmEnterprise]);
 
+  const eaDate = useMemo(() => {
+    const eaActive = !isOms && earlyAccess !== "None" && employeeCount >= 10;
+    if (!eaActive) return undefined;
+    return adjustEarlyAccessDate(addDays(clampToMidnight(toDate(payBegin)), earlyAccessOffset(earlyAccess)), earlyAccess);
+  }, [isOms, earlyAccess, employeeCount, payBegin]);
+
   type DayLabels = { [iso: string]: string[] };
   const labelMap: DayLabels = useMemo(() => {
     const map: DayLabels = {};
@@ -317,11 +389,6 @@ export default function App() {
       if (!map[k]) map[k] = [];
       if (!map[k].includes(label)) map[k].push(label);
     };
-
-    const startBegin = clampToMidnight(new Date(payBegin + "T00:00:00"));
-    const eaActive = !isOms && earlyAccess !== "None" && employeeCount >= 10;
-    const eaRaw = eaActive ? addDays(startBegin, earlyAccessOffset(earlyAccess)) : undefined;
-    const eaDate = eaRaw ? adjustEarlyAccessDate(eaRaw, earlyAccess) : undefined;
 
     if (omsDates?.lastEA && omsDates.lastPaperwork) {
       add(omsDates.earliestEA, "Earliest Early Access Date");
@@ -342,7 +409,7 @@ export default function App() {
 
     if (eaDate) add(eaDate, "Early Access Start Date");
     return map;
-  }, [periods, payBegin, earlyAccess, employeeCount, isOms, omsDates]);
+  }, [periods, eaDate, omsDates]);
 
   const priorMonthsNeeded = useMemo(() => {
     const baseStart = startOfMonth(new Date(payBegin + "T00:00:00"));
@@ -451,10 +518,33 @@ export default function App() {
     return msgs;
   }, [benefitsStart, employeeCount, earlyAccess, isOms]);
 
-  
+  const timelineSteps = useMemo(() => {
+    const deadline = periods[0]?.deadline;
+    if (!deadline || validationErrors.length > 0) return [];
+    return onboardingSteps({
+      deadline,
+      eaDate: eaDate ?? omsDates?.earliestEA,
+      earlyAccess,
+      live: periods[0].begin,
+      payEnd: periods[0].end,
+      benefitsStart: periods[0].benefitsStart,
+      firstCheck: periods[0].check,
+      lastEnrollment: omsDates?.lastEnrollment,
+    });
+  }, [periods, validationErrors, eaDate, omsDates, earlyAccess]);
+
+  // Only the timeline document is printed; the title becomes the saved PDF's file name.
+  function printTimeline() {
+    const prev = document.title;
+    document.title = `${companyName.trim() || "Client"} - TriNet Onboarding Timeline`;
+    window.print();
+    document.title = prev;
+  }
+
   return (
+    <>
     <div
-      className="min-h-screen bg-[var(--bg)] text-[var(--text)]"
+      className={`${timelineSteps.length > 0 ? "no-print " : ""}min-h-screen bg-[var(--bg)] text-[var(--text)]`}
       style={{
         ...brandVars,
         fontFamily:
@@ -674,6 +764,54 @@ export default function App() {
           </Card>
 
           <div className="lg:col-span-2 space-y-6">
+            <Card className="shadow-sm bg-[var(--panel)] border-slate-800">
+              <CardContent className="p-4 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Client onboarding timeline</h2>
+                    <p className="text-sm text-slate-600">Estimated steps from the dates above. Print or save it as a PDF to share with the client.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={printTimeline}
+                    disabled={timelineSteps.length === 0}
+                    title={timelineSteps.length === 0 ? "Clear the errors in the inputs to generate the PDF" : undefined}
+                    className="rounded-lg bg-[var(--brand-secondary)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Print / Save as PDF
+                  </button>
+                </div>
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-[var(--brand-primary)]">Client company name</label>
+                    <input
+                      className="w-full border border-slate-700 bg-slate-900 rounded-lg px-3 py-2 text-slate-100"
+                      placeholder="Acme Co."
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-[var(--brand-primary)]">Prepared by</label>
+                    <input
+                      className="w-full border border-slate-700 bg-slate-900 rounded-lg px-3 py-2 text-slate-100"
+                      placeholder="Your name"
+                      value={preparedBy}
+                      onChange={(e) => setPreparedBy(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="mt-5">
+                  {timelineSteps.length > 0 ? (
+                    <OnboardingTimeline steps={timelineSteps} />
+                  ) : (
+                    <p role="status" className="rounded-lg border border-red-600 bg-red-600/10 p-3 text-sm font-semibold text-red-600">
+                      Clear {validationErrors.length === 1 ? "the error" : `all ${validationErrors.length} errors`} in the inputs to generate the client timeline and PDF.
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
             {monthStarts.map((ms, idx) => (
               <motion.div key={idx} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, delay: idx * 0.04 }}>
                 <MonthCard date={ms} labelMap={labelMap} labelClass={labelClass} />
@@ -705,6 +843,15 @@ export default function App() {
         .chip-early { color:#bfdbfe; background:rgba(59,130,246,.12); border:1px solid rgba(59,130,246,.35); }
       `}</style>
     </div>
+    {timelineSteps.length > 0 && (
+      <TimelineDocument
+        steps={timelineSteps}
+        periods={periods.slice(0, 3)}
+        company={companyName}
+        preparedBy={preparedBy}
+      />
+    )}
+    </>
   );
 }
 

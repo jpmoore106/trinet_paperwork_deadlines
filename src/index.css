@@ -64,3 +64,27 @@ input[type="date"].dark-date::-webkit-calendar-picker-indicator {
   position: relative;
   z-index: 1;
 }
+/* Client timeline PDF: only the timeline document prints, on a letter sheet. */
+.print-only {
+  display: none;
+}
+@page {
+  size: letter;
+  margin: 0;
+}
+@media print {
+  html, body, #root {
+    background: #fff !important;
+    height: auto;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+}

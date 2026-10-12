@@ -544,7 +544,7 @@ export default function App() {
   return (
     <>
     <div
-      className="no-print min-h-screen bg-[var(--bg)] text-[var(--text)]"
+      className={`${timelineSteps.length > 0 ? "no-print " : ""}min-h-screen bg-[var(--bg)] text-[var(--text)]`}
       style={{
         ...brandVars,
         fontFamily:
@@ -775,6 +775,7 @@ export default function App() {
                     type="button"
                     onClick={printTimeline}
                     disabled={timelineSteps.length === 0}
+                    title={timelineSteps.length === 0 ? "Clear the errors in the inputs to generate the PDF" : undefined}
                     className="rounded-lg bg-[var(--brand-secondary)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Print / Save as PDF
@@ -804,7 +805,9 @@ export default function App() {
                   {timelineSteps.length > 0 ? (
                     <OnboardingTimeline steps={timelineSteps} />
                   ) : (
-                    <p className="text-sm text-slate-600">Fix the errors in the inputs to build the client timeline.</p>
+                    <p role="status" className="rounded-lg border border-red-600 bg-red-600/10 p-3 text-sm font-semibold text-red-600">
+                      Clear {validationErrors.length === 1 ? "the error" : `all ${validationErrors.length} errors`} in the inputs to generate the client timeline and PDF.
+                    </p>
                   )}
                 </div>
               </CardContent>
